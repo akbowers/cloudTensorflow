@@ -7,6 +7,21 @@ import numpy as np
 from pandas.plotting import radviz
 from sklearn.model_selection import train_test_split
 
+class Manipulation(object):
+    def __init__(self, data):
+        self.data = data
+        
+    def split_with_labels(self):
+        X = self.data.data
+        y = self.data.target
+        X_train, X_test, y_train, y_test = train_test_split(X, y)
+        feature_names = self.data.feature_names
+        label_names = self.data.target_names
+        species_names = label_names[y]
+        test_df = pd.DataFrame(X_test, columns= feature_names)
+        test_df['species'] = y_test
+        test_df['species name'] = species_names
+        return test_df
 
 class Dataframe(object):
     """docstring for ."""
@@ -23,6 +38,20 @@ class Dataframe(object):
         df['species'] = y
         df['species name'] = species_names
         return df
+    
+    def make_classification_df(X, y, y_pred, label_name_dict):
+        # It is stupid we have to specify dtype to limit number of allowed chars in string.
+        # Find a way around this 
+        pred_labels = np.empty(len(y_pred), dtype= '|S13')
+        misclassified = np.empty(len(y_pred), dtype = bool)
+        for numeric_label in label_name_dict:
+            pred_labels[np.where(y_pred == numeric_label)] = label_name_dict[numeric_label]
+        misclassified[np.where(y != y_pred)] = True
+        indicator = pred_labels
+        indicator[misclassified] = 'misclassified'
+        df = pd.DataFrame({'Actual': y, 'Predicted': y_pred, 'Indicator': indicator})
+        return df
+
 
 class Plots(object):
     def __init__(self, df):
@@ -43,7 +72,7 @@ class Plots(object):
         plt.rcParams['axes.labelsize'] = 20 # Is this even working?!?
         plt.suptitle(title, fontsize= 40)
         plt.show()
-
+       
     def make_radviz(self, class_col_name):
         plt.figure()
         return radviz(self.df, class_col_name)
@@ -80,6 +109,8 @@ class Curves(object):
         df = df.reset_index(drop=True)
         return df
 
+
+    
     def plot_roc(self, ax, df, label_number):
 
         ax.plot([1]+list(df.fpr), [1]+list(df.tpr))
