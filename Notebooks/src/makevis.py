@@ -74,29 +74,97 @@ class Evaluation(object):
         self.label_name_dict = label_name_dict
 
     def add_pred_classification_to_df(self):
-        # It is stupid we have to specify dtype to limit number of allowed chars in string.
-        # Find a way around this
-        # pred_labels = np.empty(len(self.y_pred), dtype= '|S13')
         pred_labels = np.empty(len(self.y_pred), dtype = int)
         misclassified = np.empty(len(self.y_pred), dtype = bool)
-        for numeric_label in self.label_name_dict:
-            # pred_labels[np.where(self.y_pred == numeric_label)] = self.label_name_dict[numeric_label]
-            pred_labels[np.where(self.y_pred == numeric_label)] = numeric_label
         y_test = self.df['species']
         misclassified[np.where(y_test != self.y_pred)] = True
-        indicator = pred_labels
-        # indicator[misclassified] = 'misclassified
-        indicator[misclassified] = 3
         test_df = self.df
         test_df['predicted'] = self.y_pred
-        test_df['indicator'] = indicator
+        test_df['misclassified'] = misclassified
         return test_df
 
-class Plots(object):
-    def __init__(self, df):
+class Maps(object):
+    def __init__(self, df, name_dict, factor, palette):
         self.df = df
+        self.name_dict = name_dict
+        if palette == None:
+            palette = {'#e41a1c': 'red', '#377eb8': 'blue', '#4eae4b': 'green',
+                        '#994fa1': 'magenta', '#ff8101': 'orange', '#fdfc33': 'yellow',
+                        '#a8572c': 'brown', '#f482be': 'pink', '#999999': 'grey'}
+        self.palette = palette
+        self.factor_name = factor #save off the name
+        self.color_map = self.make_color_map()
 
-    def create_scatter_matrix(self, factor, title, palette = None, color_misclassified= False):
+    def make_color_map(self):
+        if isinstance(self.factor_name, str):
+            factor = self.df[self.factor_name] #extract column
+        classes = list(set(factor))
+        if len(classes) > len(self.palette):
+            raise ValueError('''Too many groups for the number of colors provided.
+                                We only have {} colors in the palette, but you have {}
+                                groups.'''.format(len(self.palette.values), len(classes)))
+        available_colors = [c for c in self.palette.values() if c != 'black']
+        color_map = dict(zip(classes, available_colors))
+        return color_map
+
+    def chain_dicts(self, d1, d2):
+        return {key: d2[d1[key]] for key in d1}
+
+    def reverse_dict(self, d):
+        return {d[k]: k for k in d}
+
+    def reduce_palette(self):
+        rev_palette = self.reverse_dict(self.palette)
+        # print ('palette reversed: {}'.format(rev_palette))
+        # reduced_color_map = self.make_color_map()
+        return {rev_palette[k]: k for k in self.color_map.values()}
+
+    def make_label_color_dict(self):
+        # m = Maps(self.df, self.name_dict)
+        # color_map = self.make_color_map()
+        label_map = self.reverse_dict(self.name_dict)
+        label_color_dict = self.chain_dicts(label_map, self.color_map)
+        return label_color_dict
+
+class Plots(object):
+    def __init__(self, df, name_dict, factor_name, palette= None):
+        '''INPUTS: df - dataframe for creating scatter_matrix
+                    name_dict - dictionary that maps label numbers to names
+                    factor_name - str name of column in df which specifies the classes
+                    (by number)
+                    palette - custom palette if user desires. Otherwise, 9 color
+                            options are available.
+                            Will raise ValueError if user tries to pass df with more
+                            classes than available colors in palette
+                            (See instantiation of Map class)
+        '''
+        self.df = df
+        self.name_dict = name_dict
+        self.factor_name = factor_name
+        self.palette = palette
+        m = Maps(self.df, self.name_dict, self.factor_name, palette= self.palette)
+        self.reduced_palette = m.reduce_palette()
+        self.label_color_dict = m.make_label_color_dict()
+        self.rev_reduced_palette = m.reverse_dict(m.reduce_palette())
+        self.hex_map = m.chain_dicts(m.chain_dicts(self.name_dict, self.label_color_dict), self.rev_reduced_palette)
+        # rev_palette = m.reverse_dict(m.palette)
+
+    def write_plot_title(self, base_title, color_misclassified= False, color_name= 'black'):
+        if not isinstance(base_title, str):
+            raise TypeError(''''Title Needs to be of type string!''')
+        base_title = '{} ('.format(base_title)
+        title = None
+        if color_misclassified:
+            self.label_color_dict['misclassified'] = color_name
+        for label, color in self.label_color_dict.items():
+            if title is None:
+                title = '{}{} = {},'.format(base_title, color, label)
+            else:
+                title = '{} {} = {},'.format(title, color, label)
+        title = '{})'.format(title[:-1])
+        return title
+
+    def create_scatter_matrix(self, title, color_misclassified= False, mis_paint_color= '#000000'):
         '''Create a scatter matrix of the variables in df, with differently colored
         points depending on the value of df[factor].
         inputs:
@@ -108,46 +176,29 @@ class Plots(object):
                 If omitted, a predefined palette will be used, but it only includes
                 9 groups.
         '''
+        # if palette is None:
+        #     palette = ['#e41a1c', '#377eb8', '#4eae4b',
+        #                 '#994fa1', '#ff8101', '#fdfc33',
+        #                 '#a8572c', '#f482be', '#999999']
 
-        if isinstance(factor, basestring):
-            factor_name = factor #save off the name
-            factor = self.df[factor] #extract column
-            df = self.df.drop(factor_name,axis=1) # remove from df, so it
+        if isinstance(self.factor_name, str):
+            factor = self.df[self.factor_name] #extract column
+            df = self.df.drop(self.factor_name,axis=1) # remove from df, so it
             # doesn't get a row and col in the plot.
+        # classes = list(set(factor))
 
-        if palette is None:
-            palette = ['#e41a1c', '#377eb8', '#4eae4b',
-                        '#994fa1', '#ff8101', '#fdfc33',
-                        '#a8572c', '#f482be', '#999999']
+        colors = np.array(factor.apply(lambda group: self.hex_map[group]).values)
 
-        classes = list(set(factor))
-        # original_classes = classes
-
-        color_map = dict(zip(classes, palette))
-
-        if len(classes) > len(palette):
-            raise ValueError('''Too many groups for the number of colors provided.
-                            We only have {} colors in the palette, but you have {}
-                            groups.'''.format(len(palette), len(classes)))
-
-        colors = factor.apply(lambda group: color_map[group])
         if color_misclassified:
-            if len(classes) + 1 > len(palette):
-                raise ValueError('''Please add another color to your palette.
-                                We need a unique color for the misclassified values.''')
-            colors[np.where(df['misclassified'].values)] = palette[len(classes) + 1] = palette[len(classes) + 1]
-            df = df.drop('misclassified', axis=1)
+            # misclassified are colored black by default
+            colors[np.where(df['misclassified'].values)] = mis_paint_color
+            df = df.drop('misclassified', axis=1).drop('predicted', axis=1)
 
         # unique_class_names = self.df[class_col_name].unique()
         # num_unique_classes = len(unique_class_names)
-
-        title = '{} ('.format(title)
-
-        for i in range(len(classes)):
-            title = '{} {} = {},'.format(title, palette[i], classes[i])
-        title = '{})'.format(title[:-1])
         scatter_matrix(df, figsize=(25., 25.),
                               marker = '+', c= colors)
+
         plt.rcParams['axes.labelsize'] = 20 # Is this even working?!?
         plt.suptitle(title, fontsize= 40)
         plt.show()
